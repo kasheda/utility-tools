@@ -16,6 +16,11 @@ Maven (Java 11+):
 1) Build: `mvn -q -DskipTests package`
 2) Use JAR from `target/utility-tools-0.1.0.jar`
 
+API Documentation
+-----------------
+
+- Javadoc (GitHub Pages): https://kasheda.github.io/utility-tools/
+
 Manual compile:
 
 - `javac -d out src/main/java/com/utilitytools/*.java`
