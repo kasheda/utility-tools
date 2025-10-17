@@ -13,3 +13,7 @@ out/
 *.log
 example.csv
 
+# Local workspace files not part of this library
+*.sql
+*.~sql
+*.xlsx
