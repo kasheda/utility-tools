@@ -37,12 +37,29 @@ public final class TextSanitizer {
 
   /**
    * Remove all characters except letters, digits, spaces, and the characters in allowedExtra (treated literally).
+   * This variant avoids regex escaping and supports full Unicode code points.
    */
   public static String removeSpecialChars(String input, String allowedExtra) {
     if (input == null) return null;
     Objects.requireNonNull(allowedExtra, "allowedExtra");
-    String escaped = allowedExtra.replaceAll("([\\\\.\n\r\t\^\$\*\+\?\(\)\[\]\{\}\|])", "\\\\$1");
-    return input.replaceAll("[^\\p{L}\\p{Nd} " + escaped + "]+", "");
+    StringBuilder sb = new StringBuilder(input.length());
+    for (int i = 0; i < input.length(); ) {
+      int cp = input.codePointAt(i);
+      if (Character.isLetter(cp) || Character.isDigit(cp) || cp == ' ' || containsCodePoint(allowedExtra, cp)) {
+        sb.appendCodePoint(cp);
+      }
+      i += Character.charCount(cp);
+    }
+    return sb.toString();
+  }
+
+  private static boolean containsCodePoint(String s, int cp) {
+    for (int i = 0; i < s.length(); ) {
+      int c = s.codePointAt(i);
+      if (c == cp) return true;
+      i += Character.charCount(c);
+    }
+    return false;
   }
 
   /**
