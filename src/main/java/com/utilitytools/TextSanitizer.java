@@ -36,7 +36,12 @@ public final class TextSanitizer {
   public static String removeDiacritics(String input) {
     if (input == null) return null;
     String norm = Normalizer.normalize(input, Normalizer.Form.NFKD);
-    return norm.replaceAll("\\p{M}+", "");
+    String stripped = norm.replaceAll("\\p{M}+", "");
+    // Handle characters that do not decompose into base+mark in some environments
+    stripped = stripped
+        .replace('\u00F8', 'o') // ø
+        .replace('\u00D8', 'O'); // Ø
+    return stripped;
   }
 
   /**
