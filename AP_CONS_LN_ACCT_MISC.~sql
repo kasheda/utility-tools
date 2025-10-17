@@ -1,0 +1,3282 @@
+CREATE OR REPLACE FUNCTION AP_CONS_LN_ACCT_MISC (var_pi_stream IN NUMBER)
+  RETURN NUMBER AS
+  var_l_count             NUMBER;
+  var_l_count1            NUMBER;
+  var_bank_mast_dt_to_use VARCHAR2(1) := 'Y';
+  var_dat_process         DATE;
+  var_dat_last_process    DATE;
+  var_l_consis_no         NUMBER := 0;
+  var_mig_date            date := cbsfchost.pk_ba_global.dat_last_process; /*nvl(ap_get_data_mig_param('MIG_DATE'),
+                                      cbsfchost.pk_ba_global.dat_last_process);*/
+  var_l_function_name     VARCHAR2(100) := 'AP_CONS_LN_ACCT_MISC';
+  var_l_table_name        VARCHAR2(100) := 'CO_LN_ACCT_DTLS, CO_LN_ACCT_BALANCES';
+BEGIN
+  ap_bb_mig_log_string('Started #' || var_l_function_name || '# Stream = ' ||
+                       var_pi_stream);
+  var_bank_mast_dt_to_use := 'Y'; /*nvl(ap_get_data_mig_param('BANK_MAST_DT_TO_USE'),
+                                 'Y');*/
+  BEGIN
+    SELECT dat_process, dat_last_process
+      INTO var_dat_process, var_dat_last_process
+      FROM cbsfchost.ba_bank_mast
+     WHERE flg_mnt_status = 'A';
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      --write_to_file(SQLCODE, 'Select From co_civ_dates Failed.');
+      cbsfchost.ora_raiserror(sqlcode,
+                              'Select From cbsfchost.ba_bank_mast Failed.',
+                              94);
+  END;
+  /*
+    IF (var_bank_mast_dt_to_use = 'N') THEN
+      --var_dat_last_process := nvl(ap_get_data_mig_param('DAT_LAST_PROCESS'), '30-Apr-2024');
+      var_dat_process      := nvl(ap_get_data_mig_param('DAT_PROCESS'),
+                                  var_mig_date);
+      var_dat_last_process := nvl(ap_get_data_mig_param('DAT_LAST_PROCESS'),
+                                  var_mig_date);
+    END IF;
+  */
+  ap_bb_mig_log_string('00000 #' || var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --Beginning of function
+  DELETE FROM co_ln_consis
+   WHERE cod_consis_no >= 12101
+     AND cod_consis_no <= 12200;
+
+  DELETE FROM co_ln_consis_acct
+   WHERE cod_consis_no >= 12101
+     AND cod_consis_no <= 12200;
+
+  COMMIT;
+
+  --  FA : 05-May-2023 Run : Changed Consistency to refer from ln_arrears_table. Begin
+  var_l_consis_no := 12101; --Was 12014
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_dtls a
+     WHERE flg_mnt_status = 'A'
+       AND dat_last_charged IS NULL
+          --FA : 05-May-2023 Run : Begin
+       and ctr_disb > 0
+       and cod_acct_stat not in (1, 11)
+          --            AND DATEDIFF(DD, dat_acct_open, var_mig_date) > 30 --FA:30-Apr-2024: Exclude accounts opened in current month
+       and exists (select 1
+              from co_ln_arrears_table b
+             where a.cod_acct_no = b.cod_acct_no
+               and b.cod_arrear_type in ('I', 'N')
+               AND amt_arrears_assessed <> amt_arrears_waived) -- added by akshay on 11-dec
+       AND a.migration_source = 'CBS';
+    --FA : 05-May-2023 Run : End
+
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_dtls a
+     WHERE flg_mnt_status = 'A'
+       AND dat_last_charged IS NULL
+          --FA : 05-May-2023 Run : Begin
+       and ctr_disb > 0
+       and cod_acct_stat not in (1, 11)
+          --            AND DATEDIFF(DD, dat_acct_open, var_mig_date) > 30 --FA:30-Apr-2024: Exclude accounts opened in current month
+       and exists (select 1
+              from co_ln_arrears_table b
+             where a.cod_acct_no = b.cod_acct_no
+               and b.cod_arrear_type in ('I', 'N')
+               AND amt_arrears_assessed <> amt_arrears_waived) -- added by akshay on 11-dec
+       AND a.migration_source = 'BRNET';
+    --FA : 05-May-2023 Run : End
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# Select From co_ln_acct_dtls Failed.' ||
+                              sqlerrm,
+                              819);
+  END;
+
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'DAT_LAST_CHARGED',
+       var_l_function_name,
+       var_l_count,
+       'DAT_LAST_CHARGED cannot be null');
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# INSERT INTO co_ln_consis Failed.' ||
+                              sqlerrm,
+                              842);
+  END;
+
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'DAT_LAST_CHARGED',
+       var_l_function_name,
+       var_l_count1,
+       'DAT_LAST_CHARGED cannot be null');
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# INSERT INTO co_ln_consis Failed.' ||
+                              sqlerrm,
+                              842);
+  END;
+  IF (var_l_count > 0) THEN
+    BEGIN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+          FROM co_ln_acct_dtls a
+         WHERE flg_mnt_status = 'A'
+           AND dat_last_charged IS NULL
+              --FA : 05-May-2023 Run : Begin
+           and ctr_disb > 0
+           and cod_acct_stat not in (1, 11)
+              --                    AND DATEDIFF(DD, dat_acct_open, var_mig_date) > 30 --FA:30-Apr-2024: Exclude accounts opened in current month
+           and exists
+         (select 1
+                  from co_ln_arrears_table b
+                 where a.cod_acct_no = b.cod_acct_no
+                   and b.cod_arrear_type in ('I', 'N')
+                   AND amt_arrears_assessed <> amt_arrears_waived)
+           AND a.migration_source = 'CBS';
+    EXCEPTION
+      WHEN OTHERS THEN
+        cbsfchost.ora_raiserror(sqlcode,
+                                'In #' || var_l_function_name ||
+                                '# INSERT INTO co_ln_consis_acct Failed.' ||
+                                sqlerrm,
+                                860);
+    END;
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    BEGIN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+          FROM co_ln_acct_dtls a
+         WHERE flg_mnt_status = 'A'
+           AND dat_last_charged IS NULL
+              --FA : 05-May-2023 Run : Begin
+           and ctr_disb > 0
+           and cod_acct_stat not in (1, 11)
+              --                    AND DATEDIFF(DD, dat_acct_open, var_mig_date) > 30 --FA:30-Apr-2024: Exclude accounts opened in current month
+           and exists
+         (select 1
+                  from co_ln_arrears_table b
+                 where a.cod_acct_no = b.cod_acct_no
+                   and b.cod_arrear_type in ('I', 'N')
+                   AND amt_arrears_assessed <> amt_arrears_waived)
+           AND a.migration_source = 'BRNET';
+    EXCEPTION
+      WHEN OTHERS THEN
+        cbsfchost.ora_raiserror(sqlcode,
+                                'In #' || var_l_function_name ||
+                                '# INSERT INTO co_ln_consis_acct Failed.' ||
+                                sqlerrm,
+                                860);
+    END;
+  END IF;
+  --  FA : 05-May-2023 Run : Changed Consistency to refer from ln_arrears_table. End
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_consis_no := 12102; --Was 12034
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_dtls a, co_ln_acct_balances b
+     WHERE a.cod_Acct_no = b.cod_Acct_no
+       AND a.amt_face_value > b.amt_disbursed
+       AND ctr_term_months <> ctr_curr_term_months
+       AND a.ctr_disb > 0
+       AND dat_of_maturity > var_dat_process
+       AND cod_acct_stat NOT IN (1, 11)
+       AND a.migration_source = 'CBS';
+
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_dtls a, co_ln_acct_balances b
+     WHERE a.cod_Acct_no = b.cod_Acct_no
+       AND a.amt_face_value > b.amt_disbursed
+       AND ctr_term_months <> ctr_curr_term_months
+       AND a.ctr_disb > 0
+       AND dat_of_maturity > var_dat_process
+       AND cod_acct_stat NOT IN (1, 11)
+       AND a.migration_source = 'BRNET';
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# Select From co_ln_acct_dtls Failed.' ||
+                              sqlerrm,
+                              1874);
+  END;
+
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'CTR_TERM_CURR_MONTHS',
+       var_l_function_name,
+       var_l_count,
+       'PD cases where ctr_term_months and ctr_term_curr_months is not matching');
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# INSERT INTO co_ln_consis Failed.' ||
+                              sqlerrm,
+                              1897);
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'CTR_TERM_CURR_MONTHS',
+       var_l_function_name,
+       var_l_count1,
+       'PD cases where ctr_term_months and ctr_term_curr_months is not matching');
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# INSERT INTO co_ln_consis Failed.' ||
+                              sqlerrm,
+                              1897);
+  END;
+
+  IF (var_l_count > 0) THEN
+    BEGIN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+          FROM co_ln_acct_dtls a, co_ln_acct_balances b
+         WHERE a.cod_Acct_no = b.cod_Acct_no
+           AND a.amt_face_value > b.amt_disbursed
+           AND ctr_term_months <> ctr_curr_term_months
+           AND a.ctr_disb > 0
+           AND dat_of_maturity > var_dat_process
+           AND cod_acct_stat NOT IN (1, 11)
+           and rownum <= 10 --sample 10 records esaf_changes;
+           AND a.migration_source = 'CBS';
+    EXCEPTION
+      WHEN OTHERS THEN
+        cbsfchost.ora_raiserror(sqlcode,
+                                'In #' || var_l_function_name ||
+                                '# INSERT INTO co_ln_consis_acct Failed.' ||
+                                sqlerrm,
+                                1915);
+    END;
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    BEGIN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+          FROM co_ln_acct_dtls a, co_ln_acct_balances b
+         WHERE a.cod_Acct_no = b.cod_Acct_no
+           AND a.amt_face_value > b.amt_disbursed
+           AND ctr_term_months <> ctr_curr_term_months
+           AND a.ctr_disb > 0
+           AND dat_of_maturity > var_dat_process
+           AND cod_acct_stat NOT IN (1, 11)
+           and rownum <= 10 --sample 10 records esaf_changes;
+           AND a.migration_source = 'BRNET';
+    EXCEPTION
+      WHEN OTHERS THEN
+        cbsfchost.ora_raiserror(sqlcode,
+                                'In #' || var_l_function_name ||
+                                '# INSERT INTO co_ln_consis_acct Failed.' ||
+                                sqlerrm,
+                                1915);
+    END;
+  END IF;
+  COMMIT;
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+
+  var_l_consis_no := 12103; --Was 14009
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_balances b, co_ln_acct_dtls a
+     WHERE a.cod_acct_no = b.cod_acct_no
+       and nvl(b.amt_disbursed, 0) = 0
+       and a.ctr_disb > 0
+       AND a.migration_source = 'CBS';
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_balances b, co_ln_acct_dtls a
+     WHERE a.cod_acct_no = b.cod_acct_no
+       and nvl(b.amt_disbursed, 0) = 0
+       and a.ctr_disb > 0
+       AND a.migration_source = 'BRNET';
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'AMT_DISBURSED',
+       var_l_function_name,
+       var_l_count,
+       'amt_disbursed is 0 or null for ctr_disb > 0');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'AMT_DISBURSED',
+       var_l_function_name,
+       var_l_count1,
+       'amt_disbursed is 0 or null for ctr_disb > 0');
+
+  END;
+
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, b.cod_acct_no, b.migration_source
+        FROM co_ln_acct_balances b, co_ln_acct_dtls a
+       WHERE a.cod_acct_no = b.cod_acct_no
+         and nvl(b.amt_disbursed, 0) = 0
+         and a.ctr_disb > 0
+         AND a.migration_source = 'CBS';
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, b.cod_acct_no, b.migration_source
+        FROM co_ln_acct_balances b, co_ln_acct_dtls a
+       WHERE a.cod_acct_no = b.cod_acct_no
+         and nvl(b.amt_disbursed, 0) = 0
+         and a.ctr_disb > 0
+         AND a.migration_source = 'BRNET';
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_consis_no := 12104;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_balances b, co_ln_acct_dtls a
+     WHERE a.cod_acct_no = b.cod_acct_no
+       AND a.amt_face_value < b.amt_princ_balance
+       AND a.migration_source = 'CBS';
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_balances b, co_ln_acct_dtls a
+     WHERE a.cod_acct_no = b.cod_acct_no
+       AND a.amt_face_value < b.amt_princ_balance
+       AND a.migration_source = 'BRNET';
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'AMT_FACE_VALUE',
+       var_l_function_name,
+       var_l_count,
+       'Loans Where AMT_FACE_VALUE < AMT_PRINC_BALANCE.');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'AMT_FACE_VALUE',
+       var_l_function_name,
+       var_l_count1,
+       'Loans Where AMT_FACE_VALUE < AMT_PRINC_BALANCE.');
+
+  END;
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, b.cod_acct_no, b.migration_source
+        FROM co_ln_acct_balances b, co_ln_acct_dtls a
+       WHERE a.cod_acct_no = b.cod_acct_no
+         AND a.amt_face_value < b.amt_princ_balance
+         AND a.migration_source = 'CBS';
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, b.cod_acct_no, b.migration_source
+        FROM co_ln_acct_balances b, co_ln_acct_dtls a
+       WHERE a.cod_acct_no = b.cod_acct_no
+         AND a.amt_face_value < b.amt_princ_balance
+         AND a.migration_source = 'BRNET';
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_consis_no := 12105;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_balances b, co_ln_acct_dtls a
+     WHERE a.cod_acct_no = b.cod_acct_no
+       AND a.dat_last_disb IS NULL
+       AND b.amt_disbursed > 0
+       AND a.migration_source = 'CBS';
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_balances b, co_ln_acct_dtls a
+     WHERE a.cod_acct_no = b.cod_acct_no
+       AND a.dat_last_disb IS NULL
+       AND b.amt_disbursed > 0
+       AND a.migration_source = 'BRNET';
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'DAT_LAST_DISB',
+       var_l_function_name,
+       var_l_count,
+       'LOAN ACCOUNTS WHERE AMT_DISBURSED>zero AND DAT_LAST_DISBURSEMENT IS NULL.');
+
+  END;
+
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'DAT_LAST_DISB',
+       var_l_function_name,
+       var_l_count1,
+       'LOAN ACCOUNTS WHERE AMT_DISBURSED>zero AND DAT_LAST_DISBURSEMENT IS NULL.');
+
+  END;
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, b.cod_acct_no, b.migration_source
+        FROM co_ln_acct_balances b, co_ln_acct_dtls a
+       WHERE a.cod_acct_no = b.cod_acct_no
+         AND a.dat_last_disb IS NULL
+         AND b.amt_disbursed > 0
+         AND a.migration_source = 'CBS';
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, b.cod_acct_no, b.migration_source
+        FROM co_ln_acct_balances b, co_ln_acct_dtls a
+       WHERE a.cod_acct_no = b.cod_acct_no
+         AND a.dat_last_disb IS NULL
+         AND b.amt_disbursed > 0
+         AND a.migration_source = 'BRNET';
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_consis_no := 12106;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_balances b, co_ln_acct_dtls a
+     WHERE a.cod_acct_no = b.cod_acct_no
+       AND (b.amt_princ_balance < 0 OR b.amt_arrears_princ < 0 OR
+           b.amt_disbursed < 0)
+       AND a.migration_source = 'CBS';
+
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_balances b, co_ln_acct_dtls a
+     WHERE a.cod_acct_no = b.cod_acct_no
+       AND (b.amt_princ_balance < 0 OR b.amt_arrears_princ < 0 OR
+           b.amt_disbursed < 0)
+       AND a.migration_source = 'BRNET';
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'AMT_PRINC_BALANCE',
+       var_l_function_name,
+       var_l_count,
+       'ACCOUNTS WHERE principal balance is less than zero');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'AMT_PRINC_BALANCE',
+       var_l_function_name,
+       var_l_count1,
+       'ACCOUNTS WHERE principal balance is less than zero');
+
+  END;
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, b.cod_acct_no, b.migration_source
+        FROM co_ln_acct_balances b, co_ln_acct_dtls a
+       WHERE a.cod_acct_no = b.cod_acct_no
+         AND (b.amt_princ_balance < 0 OR b.amt_arrears_princ < 0 OR
+             b.amt_disbursed < 0)
+         AND a.migration_source = 'CBS';
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, b.cod_acct_no, b.migration_source
+        FROM co_ln_acct_balances b, co_ln_acct_dtls a
+       WHERE a.cod_acct_no = b.cod_acct_no
+         AND (b.amt_princ_balance < 0 OR b.amt_arrears_princ < 0 OR
+             b.amt_disbursed < 0)
+         AND a.migration_source = 'BRNET';
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_consis_no := 12107;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_balances b, co_ln_acct_dtls a
+     WHERE a.cod_acct_no = b.cod_acct_no
+       AND b.amt_princ_balance > 0
+       AND (a.dat_first_disb IS NULL)
+       AND a.migration_source = 'CBS';
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_balances b, co_ln_acct_dtls a
+     WHERE a.cod_acct_no = b.cod_acct_no
+       AND b.amt_princ_balance > 0
+       AND (a.dat_first_disb IS NULL)
+       AND a.migration_source = 'BRNET';
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'AMT_PRINC_BALANCE',
+       var_l_function_name,
+       var_l_count,
+       'LOANS WHERE principal balance > zero and first disb date is null');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'BRNET',
+       var_l_table_name,
+       'AMT_PRINC_BALANCE',
+       var_l_function_name,
+       var_l_count1,
+       'LOANS WHERE principal balance > zero and first disb date is null');
+
+  END;
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, b.cod_acct_no, b.migration_source
+        FROM co_ln_acct_balances b, co_ln_acct_dtls a
+       WHERE a.cod_acct_no = b.cod_acct_no
+         AND b.amt_princ_balance > 0
+         AND (a.dat_first_disb IS NULL)
+         AND a.migration_source = 'CBS';
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, b.cod_acct_no, b.migration_source
+        FROM co_ln_acct_balances b, co_ln_acct_dtls a
+       WHERE a.cod_acct_no = b.cod_acct_no
+         AND b.amt_princ_balance > 0
+         AND (a.dat_first_disb IS NULL)
+         AND a.migration_source = 'BRNET';
+  END IF;
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_consis_no := 12108;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_balances b, co_ln_acct_dtls a
+     WHERE a.cod_acct_no = b.cod_acct_no
+       AND b.amt_princ_balance = 0
+       AND a.dat_last_charged IS NULL
+       AND b.amt_disbursed != 0
+       AND a.migration_source = 'CBS';
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_balances b, co_ln_acct_dtls a
+     WHERE a.cod_acct_no = b.cod_acct_no
+       AND b.amt_princ_balance = 0
+       AND a.dat_last_charged IS NULL
+       AND b.amt_disbursed != 0
+       AND a.migration_source = 'BRNET';
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'DAT_LAST_CHARGED',
+       var_l_function_name,
+       var_l_count,
+       'LOANS WHERE Accounts which are having amt_princ_bal is ZERO and dat_last_charged is NULL');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'BRNET',
+       var_l_table_name,
+       'DAT_LAST_CHARGED',
+       var_l_function_name,
+       var_l_count1,
+       'LOANS WHERE Accounts which are having amt_princ_bal is ZERO and dat_last_charged is NULL');
+
+  END;
+
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, b.cod_acct_no, b.migration_source
+        FROM co_ln_acct_balances b, co_ln_acct_dtls a
+       WHERE a.cod_acct_no = b.cod_acct_no
+         AND b.amt_princ_balance = 0
+         AND a.dat_last_charged IS NULL
+         AND b.amt_disbursed != 0
+         AND b.migration_source = 'CBS';
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, b.cod_acct_no, b.migration_source
+        FROM co_ln_acct_balances b, co_ln_acct_dtls a
+       WHERE a.cod_acct_no = b.cod_acct_no
+         AND b.amt_princ_balance = 0
+         AND a.dat_last_charged IS NULL
+         AND b.amt_disbursed != 0
+         AND b.migration_source = 'BRNET';
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_table_name := 'CO_LN_ARREARS_TABLE';
+  var_l_consis_no  := 12109;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_arrears_table a, co_ln_acct_dtls b
+     WHERE a.cod_acct_no = b.cod_acct_no
+       AND dat_arrears_due < dat_last_restructure
+       AND amt_arrears_due > 0
+       AND a.migration_source = 'CBS';
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_arrears_table a, co_ln_acct_dtls b
+     WHERE a.cod_acct_no = b.cod_acct_no
+       AND dat_arrears_due < dat_last_restructure
+       AND amt_arrears_due > 0
+       AND a.migration_source = 'BRNET';
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'DAT_LAST_CHARGED',
+       var_l_function_name,
+       var_l_count,
+       'accounts where due is present before dat_last_restructure');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'BRNET',
+       var_l_table_name,
+       'DAT_LAST_CHARGED',
+       var_l_function_name,
+       var_l_count1,
+       'accounts where due is present before dat_last_restructure');
+
+  END;
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+        FROM co_ln_arrears_table a, co_ln_acct_dtls b
+       WHERE a.cod_acct_no = b.cod_acct_no
+         AND dat_arrears_due < dat_last_restructure
+         AND amt_arrears_due > 0
+         AND a.migration_source = 'CBS';
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+        FROM co_ln_arrears_table a, co_ln_acct_dtls b
+       WHERE a.cod_acct_no = b.cod_acct_no
+         AND dat_arrears_due < dat_last_restructure
+         AND amt_arrears_due > 0
+         AND a.migration_source = 'BRNET';
+
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_table_name := 'CO_LN_ACCT_PAYINSTRN';
+  var_l_consis_no  := 12110;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_dtls a
+     WHERE A.COD_REMITTER_ACCT IS NOT NULL
+       AND NOT EXISTS (SELECT 1
+              FROM co_ln_acct_payinstrn b
+             WHERE b.cod_acct_no = a.cod_acct_no)
+       AND a.migration_source = 'CBS';
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_dtls a
+     WHERE A.COD_REMITTER_ACCT IS NOT NULL
+       AND NOT EXISTS (SELECT 1
+              FROM co_ln_acct_payinstrn b
+             WHERE b.cod_acct_no = a.cod_acct_no)
+       AND a.migration_source = 'BRNET';
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'COD_ACCT_NO',
+       var_l_function_name,
+       var_l_count,
+       'cod_acct_no IS NOT IN co_ln_acct_payinstrn');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'COD_ACCT_NO',
+       var_l_function_name,
+       var_l_count1,
+       'cod_acct_no IS NOT IN co_ln_acct_payinstrn');
+
+  END;
+
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+        FROM co_ln_acct_dtls a
+       WHERE A.COD_REMITTER_ACCT IS NOT NULL
+         AND NOT EXISTS (SELECT 1
+                FROM co_ln_acct_payinstrn b
+               WHERE b.cod_acct_no = a.cod_acct_no)
+         and rownum <= 10 --sample 10 records esaf_changes;
+         AND a.migration_source = 'CBS';
+  END IF;
+
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+        FROM co_ln_acct_dtls a
+       WHERE A.COD_REMITTER_ACCT IS NOT NULL
+         AND NOT EXISTS (SELECT 1
+                FROM co_ln_acct_payinstrn b
+               WHERE b.cod_acct_no = a.cod_acct_no)
+         and rownum <= 10 --sample 10 records esaf_changes;
+         AND a.migration_source = 'BRNET';
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_consis_no := 12111;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_payinstrn c
+     WHERE nvl(c.cod_remitter_acct, 0) NOT IN
+           (SELECT cod_acct_no FROM co_ch_acct_mast)
+       AND c.migration_source = 'CBS';
+
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_payinstrn c
+     WHERE nvl(c.cod_remitter_acct, 0) NOT IN
+           (SELECT cod_acct_no FROM co_ch_acct_mast)
+       AND c.migration_source = 'BRNET';
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'COD_REMITTER_ACCT',
+       var_l_function_name,
+       var_l_count,
+       'Loans accounts whose casa remitter accounts not present in co_ch_acct_mast');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'COD_REMITTER_ACCT',
+       var_l_function_name,
+       var_l_count1,
+       'Loans accounts whose casa remitter accounts not present in co_ch_acct_mast');
+
+  END;
+
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, c.cod_acct_no, c.migration_source
+        FROM co_ln_acct_payinstrn c
+       WHERE nvl(c.cod_remitter_acct, 0) NOT IN
+             (SELECT cod_acct_no FROM co_ch_acct_mast)
+         AND C.migration_source = 'CBS';
+
+  END IF;
+
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, c.cod_acct_no, c.migration_source
+        FROM co_ln_acct_payinstrn c
+       WHERE nvl(c.cod_remitter_acct, 0) NOT IN
+             (SELECT cod_acct_no FROM co_ch_acct_mast)
+         AND C.migration_source = 'BRNET';
+
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_table_name := 'CO_LN_INT_BASE_HIST';
+  var_l_consis_no  := 12112;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_dtls a
+     WHERE NOT EXISTS (SELECT 1
+              FROM co_ln_int_base_hist b
+             WHERE b.cod_acct_no = a.cod_acct_no)
+       and ctr_disb > 0
+       AND a.migration_source = 'CBS';
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_dtls a
+     WHERE NOT EXISTS (SELECT 1
+              FROM co_ln_int_base_hist b
+             WHERE b.cod_acct_no = a.cod_acct_no)
+       and ctr_disb > 0
+       AND a.migration_source = 'BRNET';
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'COD_ACCT_NO',
+       var_l_function_name,
+       var_l_count,
+       'accounts not present in co_ln_int_base_hist');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'COD_ACCT_NO',
+       var_l_function_name,
+       var_l_count1,
+       'accounts not present in co_ln_int_base_hist');
+
+  END;
+
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+        FROM co_ln_acct_dtls a
+       WHERE NOT EXISTS (SELECT 1
+                FROM co_ln_int_base_hist b
+               WHERE b.cod_acct_no = a.cod_acct_no)
+         and ctr_disb > 0
+         and rownum <= 10 --sample 10 records esaf_changes;
+         AND a.migration_source = 'CBS';
+  END IF;
+
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+        FROM co_ln_acct_dtls a
+       WHERE NOT EXISTS (SELECT 1
+                FROM co_ln_int_base_hist b
+               WHERE b.cod_acct_no = a.cod_acct_no)
+         and ctr_disb > 0
+         and rownum <= 10 --sample 10 records esaf_changes;
+         AND a.migration_source = 'BRNET';
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_consis_no := 12113;
+  BEGIN
+    SELECT COUNT(1)
+      INTO var_l_count
+      FROM (SELECT /*+PARALLEL(4)*/
+             b.cod_acct_no, b.min_baschg, c.dat_last_charged
+              FROM (SELECT a.cod_acct_no, MIN(dat_baschg_eff) min_baschg
+                      FROM co_ln_int_base_hist a
+                     GROUP BY cod_acct_no) b,
+                   co_ln_acct_dtls c
+             WHERE b.cod_acct_no = c.cod_acct_no
+               AND b.min_baschg > c.dat_last_charged
+               AND c.dat_of_maturity > var_dat_last_process
+               AND dat_last_charged IS NOT NULL
+               AND c.migration_source = 'CBS');
+
+    SELECT COUNT(1)
+      INTO var_l_count
+      FROM (SELECT /*+PARALLEL(4)*/
+             b.cod_acct_no, b.min_baschg, c.dat_last_charged
+              FROM (SELECT a.cod_acct_no, MIN(dat_baschg_eff) min_baschg
+                      FROM co_ln_int_base_hist a
+                     GROUP BY cod_acct_no) b,
+                   co_ln_acct_dtls c
+             WHERE b.cod_acct_no = c.cod_acct_no
+               AND b.min_baschg > c.dat_last_charged
+               AND c.dat_of_maturity > var_dat_last_process
+               AND dat_last_charged IS NOT NULL
+               AND c.migration_source = 'BRNET');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'DAT_BASCHG_EFF',
+       var_l_function_name,
+       var_l_count,
+       'ACCOUNTS int base hist min base effect is after last charging date');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'DAT_BASCHG_EFF',
+       var_l_function_name,
+       var_l_count1,
+       'ACCOUNTS int base hist min base effect is after last charging date');
+
+  END;
+
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+        FROM (SELECT /*+PARALLEL(4)*/
+               b.cod_acct_no,
+               b.min_baschg,
+               c.dat_last_charged,
+               c.migration_source
+                FROM (SELECT a.cod_acct_no, MIN(dat_baschg_eff) min_baschg
+                        FROM co_ln_int_base_hist a
+                       GROUP BY cod_acct_no) b,
+                     co_ln_acct_dtls c
+               WHERE b.cod_acct_no = c.cod_acct_no
+                 AND b.min_baschg > c.dat_last_charged
+                 AND c.dat_of_maturity > var_dat_last_process
+                 AND dat_last_charged IS NOT NULL
+                 AND c.migration_source = 'CBS')
+       where rownum <= 10 --sample 10 records esaf_changes;
+      ;
+
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+        FROM (SELECT /*+PARALLEL(4)*/
+               b.cod_acct_no,
+               b.min_baschg,
+               c.dat_last_charged,
+               c.migration_source
+                FROM (SELECT a.cod_acct_no, MIN(dat_baschg_eff) min_baschg
+                        FROM co_ln_int_base_hist a
+                       GROUP BY cod_acct_no) b,
+                     co_ln_acct_dtls c
+               WHERE b.cod_acct_no = c.cod_acct_no
+                 AND b.min_baschg > c.dat_last_charged
+                 AND c.dat_of_maturity > var_dat_last_process
+                 AND dat_last_charged IS NOT NULL
+                 AND c.migration_source = 'BRNET')
+       where rownum <= 10 --sample 10 records esaf_changes;
+      ;
+
+  END IF;
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_consis_no := 12114;
+  BEGIN
+    SELECT COUNT(1)
+      INTO var_l_count
+      FROM (SELECT /*+PARALLEL(4)*/
+             cod_acct_no, a.dat_baschg_eff, COUNT(1) cnt
+              FROM co_ln_int_base_hist a
+             WHERE a.migration_source = 'CBS'
+             GROUP BY cod_acct_no, a.dat_baschg_eff
+            HAVING COUNT(1) > 1);
+
+    SELECT COUNT(1)
+      INTO var_l_count
+      FROM (SELECT /*+PARALLEL(4)*/
+             cod_acct_no, a.dat_baschg_eff, COUNT(1) cnt
+              FROM co_ln_int_base_hist a
+             WHERE a.migration_source = 'BRNET'
+             GROUP BY cod_acct_no, a.dat_baschg_eff
+            HAVING COUNT(1) > 1);
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'COD_ACCT_NO',
+       var_l_function_name,
+       var_l_count,
+       'Loans accounts where duplicate entries present in co_ln_int_base_hist for same date');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'COD_ACCT_NO',
+       var_l_function_name,
+       var_l_count1,
+       'Loans accounts where duplicate entries present in co_ln_int_base_hist for same date');
+
+  END;
+
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, cod_acct_no
+        FROM (SELECT /*+PARALLEL(4)*/
+               cod_acct_no, a.dat_baschg_eff, COUNT(1) cnt
+                FROM co_ln_int_base_hist a
+               WHERE A.migration_source = 'CBS'
+               GROUP BY cod_acct_no, a.dat_baschg_eff
+              HAVING COUNT(1) > 1);
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, cod_acct_no
+        FROM (SELECT /*+PARALLEL(4)*/
+               cod_acct_no, a.dat_baschg_eff, COUNT(1) cnt
+                FROM co_ln_int_base_hist a
+               WHERE A.migration_source = 'BRNET'
+               GROUP BY cod_acct_no, a.dat_baschg_eff
+              HAVING COUNT(1) > 1);
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_consis_no := 12115;
+  BEGIN
+    SELECT COUNT(1)
+      INTO var_l_count
+      FROM (SELECT /*+PARALLEL(4)*/
+            DISTINCT b.cod_acct_no
+            --          , b.amt_rested_principal
+            --          , c.amt_disbursed
+              FROM co_ln_int_base_hist b
+            --          , co_ln_acct_balances c
+             WHERE b.amt_rested_principal < 0
+            --         WHERE b.cod_acct_no = c.cod_acct_no
+            --           AND b.amt_rested_principal > c.amt_disbursed
+            );
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'AMT_RESTED_PRINCIPAL',
+       var_l_function_name,
+       var_l_count,
+       'ACCOUNTS in int base hist with amt_rested_principal is negative');
+
+  END;
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+        FROM (SELECT /*+PARALLEL(4)*/
+              DISTINCT b.cod_acct_no, MIGRATION_SOURCE
+              --          , b.amt_rested_principal
+              --          , c.amt_disbursed
+                FROM co_ln_int_base_hist b
+              --          , co_ln_acct_balances c
+               WHERE b.amt_rested_principal < 0
+                    --         WHERE b.cod_acct_no = c.cod_acct_no
+                    --           AND b.amt_rested_principal > c.amt_disbursed
+                 AND b.migration_source = 'CBS');
+  END IF;
+
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+        FROM (SELECT /*+PARALLEL(4)*/
+              DISTINCT b.cod_acct_no, MIGRATION_SOURCE
+              --          , b.amt_rested_principal
+              --          , c.amt_disbursed
+                FROM co_ln_int_base_hist b
+              --          , co_ln_acct_balances c
+               WHERE b.amt_rested_principal < 0
+                    --         WHERE b.cod_acct_no = c.cod_acct_no
+                    --           AND b.amt_rested_principal > c.amt_disbursed
+                 AND b.migration_source = 'BRNET');
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_consis_no := 12116;
+  BEGIN
+    SELECT COUNT(1)
+      INTO var_l_count
+      FROM (SELECT /*+PARALLEL(4)*/
+             b.cod_acct_no, b.amt_disbursed, c.amt_disbursed
+              FROM (SELECT a.cod_acct_no, MAX(a.amt_disbursed) amt_disbursed
+                      FROM co_ln_int_base_hist a
+                     GROUP BY a.cod_acct_no) b,
+                   co_ln_acct_balances c
+             WHERE b.cod_acct_no = c.cod_acct_no
+               AND b.amt_disbursed != c.amt_disbursed
+               AND c.migration_source = 'CBS');
+    SELECT COUNT(1)
+      INTO var_l_count1
+      FROM (SELECT /*+PARALLEL(4)*/
+             b.cod_acct_no, b.amt_disbursed, c.amt_disbursed
+              FROM (SELECT a.cod_acct_no, MAX(a.amt_disbursed) amt_disbursed
+                      FROM co_ln_int_base_hist a
+                     GROUP BY a.cod_acct_no) b,
+                   co_ln_acct_balances c
+             WHERE b.cod_acct_no = c.cod_acct_no
+               AND b.amt_disbursed != c.amt_disbursed
+               AND c.migration_source = 'BRNET');
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'AMT_DISBURSED',
+       var_l_function_name,
+       var_l_count,
+       'ACCOUNTS in int base hist with MAX(co_ln_int_base_hist.amt_disbursed) != co_ln_acct_balances.amt_disbursed');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'AMT_DISBURSED',
+       var_l_function_name,
+       var_l_count1,
+       'ACCOUNTS in int base hist with MAX(co_ln_int_base_hist.amt_disbursed) != co_ln_acct_balances.amt_disbursed');
+
+  END;
+
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+        FROM (SELECT /*+PARALLEL(4)*/
+               b.cod_acct_no,
+               b.amt_disbursed,
+               c.amt_disbursed,
+               c.MIGRATION_SOURCE
+                FROM (SELECT a.cod_acct_no,
+                             MAX(a.amt_disbursed) amt_disbursed
+                        FROM co_ln_int_base_hist a
+                       GROUP BY a.cod_acct_no) b,
+                     co_ln_acct_balances c
+               WHERE b.cod_acct_no = c.cod_acct_no
+                 AND b.amt_disbursed != c.amt_disbursed
+                 AND c.migration_source = 'CBS');
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+        FROM (SELECT /*+PARALLEL(4)*/
+               b.cod_acct_no,
+               b.amt_disbursed,
+               c.amt_disbursed,
+               c.MIGRATION_SOURCE
+                FROM (SELECT a.cod_acct_no,
+                             MAX(a.amt_disbursed) amt_disbursed
+                        FROM co_ln_int_base_hist a
+                       GROUP BY a.cod_acct_no) b,
+                     co_ln_acct_balances c
+               WHERE b.cod_acct_no = c.cod_acct_no
+                 AND b.amt_disbursed != c.amt_disbursed
+                 AND c.migration_source = 'BRNET');
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_consis_no := 12117;
+  BEGIN
+    SELECT COUNT(1)
+      INTO var_l_count
+      FROM (SELECT /*+PARALLEL(4)*/
+             b.cod_acct_no, b.amt_face_value, c.amt_face_value
+              FROM (SELECT a.cod_acct_no,
+                           MAX(a.amt_face_value) amt_face_value
+                      FROM co_ln_int_base_hist a
+                     GROUP BY a.cod_acct_no) b,
+                   co_ln_acct_dtls c
+             WHERE b.cod_acct_no = c.cod_acct_no
+               AND b.amt_face_value != c.amt_face_value);
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'amt_face_value',
+       var_l_function_name,
+       var_l_count,
+       'ACCOUNTS in int base hist with MAX(co_ln_int_base_hist.amt_face_value) != co_ln_acct_dtls.amt_face_value');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'amt_face_value',
+       var_l_function_name,
+       var_l_count1,
+       'ACCOUNTS in int base hist with MAX(co_ln_int_base_hist.amt_face_value) != co_ln_acct_dtls.amt_face_value');
+
+  END;
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+        FROM (SELECT /*+PARALLEL(4)*/
+               b.cod_acct_no,
+               b.amt_face_value,
+               c.amt_face_value,
+               c.MIGRATION_SOURCE
+                FROM (SELECT a.cod_acct_no,
+                             MAX(a.amt_face_value) amt_face_value
+                        FROM co_ln_int_base_hist a
+                       GROUP BY a.cod_acct_no) b,
+                     co_ln_acct_dtls c
+               WHERE b.cod_acct_no = c.cod_acct_no
+                 AND b.amt_face_value != c.amt_face_value
+                 AND c.migration_source = 'CBS');
+
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+        FROM (SELECT /*+PARALLEL(4)*/
+               b.cod_acct_no,
+               b.amt_face_value,
+               c.amt_face_value,
+               c.MIGRATION_SOURCE
+                FROM (SELECT a.cod_acct_no,
+                             MAX(a.amt_face_value) amt_face_value
+                        FROM co_ln_int_base_hist a
+                       GROUP BY a.cod_acct_no) b,
+                     co_ln_acct_dtls c
+               WHERE b.cod_acct_no = c.cod_acct_no
+                 AND b.amt_face_value != c.amt_face_value
+                 AND c.migration_source = 'BRNET');
+
+  END IF;
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_table_name := 'CO_LN_ACCT_DTLS';
+  var_l_consis_no  := 12118; --Was 12017
+  /*consis 17 : DAT_LAST_PAYMENT should not be null*/
+
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_dtls a
+     WHERE a.flg_mnt_status = 'A'
+       AND dat_last_payment IS NULL
+       and a.ctr_disb > 0
+       and (SELECT count(1)
+              FROM co_ln_arrears_table b
+             WHERE b.cod_Acct_no = a.cod_Acct_no
+               and b.AMT_ARREARS_DUE != b.AMT_ARREARS_ASSESSED) > 0
+
+       AND a.migration_source = 'CBS';
+
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_dtls a
+     WHERE a.flg_mnt_status = 'A'
+       AND dat_last_payment IS NULL
+       and a.ctr_disb > 0
+       and (SELECT count(1)
+              FROM co_ln_arrears_table b
+             WHERE b.cod_Acct_no = a.cod_Acct_no
+               and b.AMT_ARREARS_DUE != b.AMT_ARREARS_ASSESSED) > 0
+
+       AND a.migration_source = 'BRNET';
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# Select From co_ln_acct_dtls Failed.' ||
+                              sqlerrm,
+                              998);
+  END;
+
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'DAT_LAST_PAYMENT',
+       var_l_function_name,
+       var_l_count,
+       'DAT_LAST_PAYMENT cannot be null in case of disbursed loan accounts where customer has paid the installment amount against the arrears.');
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# INSERT INTO co_ln_consis Failed.' ||
+                              sqlerrm,
+                              1021);
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'DAT_LAST_PAYMENT',
+       var_l_function_name,
+       var_l_count1,
+       'DAT_LAST_PAYMENT cannot be null in case of disbursed loan accounts where customer has paid the installment amount against the arrears.');
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# INSERT INTO co_ln_consis Failed.' ||
+                              sqlerrm,
+                              1021);
+  END;
+
+  IF (var_l_count > 0) THEN
+    BEGIN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+          FROM co_ln_acct_dtls a
+         WHERE a.flg_mnt_status = 'A'
+           AND a.dat_last_payment IS NULL
+           and a.ctr_disb > 0
+           and (SELECT count(1)
+                  FROM co_ln_arrears_table b
+                 WHERE b.cod_Acct_no = a.cod_Acct_no
+                   and b.AMT_ARREARS_DUE != b.AMT_ARREARS_ASSESSED) > 0
+           AND a.migration_source = 'CBS';
+    EXCEPTION
+      WHEN OTHERS THEN
+        cbsfchost.ora_raiserror(sqlcode,
+                                'In #' || var_l_function_name ||
+                                '# INSERT INTO co_ln_consis_acct Failed.' ||
+                                sqlerrm,
+                                1039);
+    END;
+  END IF;
+
+  IF (var_l_count1 > 0) THEN
+    BEGIN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+          FROM co_ln_acct_dtls a
+         WHERE a.flg_mnt_status = 'A'
+           AND a.dat_last_payment IS NULL
+           and a.ctr_disb > 0
+           and (SELECT count(1)
+                  FROM co_ln_arrears_table b
+                 WHERE b.cod_Acct_no = a.cod_Acct_no
+                   and b.AMT_ARREARS_DUE != b.AMT_ARREARS_ASSESSED) > 0
+           AND a.migration_source = 'BRNET';
+    EXCEPTION
+      WHEN OTHERS THEN
+        cbsfchost.ora_raiserror(sqlcode,
+                                'In #' || var_l_function_name ||
+                                '# INSERT INTO co_ln_consis_acct Failed.' ||
+                                sqlerrm,
+                                1039);
+    END;
+  END IF;
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_consis_no := 12119; --Was 12057
+  BEGIN
+    ------Ritesh Changes 24-Mar-24
+    select count(*)
+      into var_l_count
+      from co_ln_acct_dtls d
+     where d.dat_last_charged is null
+       and d.dat_first_disb <>
+           (select min(dat_stage_start)
+              from co_ln_acct_schedule
+             where cod_acct_no = d.cod_acct_no)
+       AND d.migration_source = 'CBS';
+    select count(*)
+      into var_l_count1
+      from co_ln_acct_dtls d
+     where d.dat_last_charged is null
+       and d.dat_first_disb <>
+           (select min(dat_stage_start)
+              from co_ln_acct_schedule
+             where cod_acct_no = d.cod_acct_no)
+       AND d.migration_source = 'BRNET';
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# Select From co_ln_acct_dtls Failed.' ||
+                              sqlerrm,
+                              1916);
+  END;
+
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'dat_first_disb',
+       var_l_function_name,
+       var_l_count,
+       'Charging Date is NULL and dat_first_disb <> min(dat_stage_start) of Loan Schedule');
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# INSERT INTO co_ln_consis Failed.' ||
+                              sqlerrm,
+                              1917);
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'dat_first_disb',
+       var_l_function_name,
+       var_l_count1,
+       'Charging Date is NULL and dat_first_disb <> min(dat_stage_start) of Loan Schedule');
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# INSERT INTO co_ln_consis Failed.' ||
+                              sqlerrm,
+                              1917);
+  END;
+  IF (var_l_count > 0) THEN
+    BEGIN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+          from co_ln_acct_dtls d
+         where d.dat_last_charged is null
+           and d.dat_first_disb <>
+               (select min(dat_stage_start)
+                  from co_ln_acct_schedule
+                 where cod_acct_no = d.cod_acct_no)
+           AND d.migration_source = 'CBS';
+    EXCEPTION
+      WHEN OTHERS THEN
+        cbsfchost.ora_raiserror(sqlcode,
+                                'In #' || var_l_function_name ||
+                                '# INSERT INTO co_ln_consis_acct Failed.' ||
+                                sqlerrm,
+                                1918);
+    END;
+  END IF;
+  IF (var_l_count1 > 0) THEN
+    BEGIN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+          from co_ln_acct_dtls d
+         where d.dat_last_charged is null
+           and d.dat_first_disb <>
+               (select min(dat_stage_start)
+                  from co_ln_acct_schedule
+                 where cod_acct_no = d.cod_acct_no)
+           AND d.migration_source = 'BRNET';
+    EXCEPTION
+      WHEN OTHERS THEN
+        cbsfchost.ora_raiserror(sqlcode,
+                                'In #' || var_l_function_name ||
+                                '# INSERT INTO co_ln_consis_acct Failed.' ||
+                                sqlerrm,
+                                1918);
+    END;
+  END IF;
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  /* esaf_changes below was present in capri*/
+  var_l_table_name := 'CO_LN_ACCT_ACCRUAL_AMT';
+  var_l_consis_no  := 12120; --Was 12059
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      from co_ln_acct_dtls a
+     where dat_last_charged < var_mig_date
+       and cod_acct_stat not in (1, 5, 11)
+       and a.ctr_disb > 0
+       and not exists (select 1
+              from co_LN_ACCT_ACCRUAL_AMT c
+             where a.cod_acct_no = c.cod_acct_no
+               and amt_accrual > 0)
+       AND a.migration_source = 'CBS';
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      from co_ln_acct_dtls a
+     where dat_last_charged < var_mig_date
+       and cod_acct_stat not in (1, 5, 11)
+       and a.ctr_disb > 0
+       and not exists (select 1
+              from co_LN_ACCT_ACCRUAL_AMT c
+             where a.cod_acct_no = c.cod_acct_no
+               and amt_accrual > 0)
+       AND a.migration_source = 'BRNET';
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# Select From co_LN_ACCT_DTLS Failed.' ||
+                              sqlerrm,
+                              2102);
+  END;
+
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'AMT_ACCRUAL',
+       var_l_function_name,
+       var_l_count,
+       'UnCharged Accrual Amount = 0 where Last Charging Date < Migration Date.');
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# INSERT INTO co_ln_consis Failed.' ||
+                              sqlerrm,
+                              2122);
+  END;
+
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'AMT_ACCRUAL',
+       var_l_function_name,
+       var_l_count1,
+       'UnCharged Accrual Amount = 0 where Last Charging Date < Migration Date.');
+
+  EXCEPTION
+    WHEN OTHERS THEN
+      cbsfchost.ora_raiserror(sqlcode,
+                              'In #' || var_l_function_name ||
+                              '# INSERT INTO co_ln_consis Failed.' ||
+                              sqlerrm,
+                              2122);
+  END;
+
+  IF (var_l_count > 0) THEN
+    BEGIN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+          FROM co_ln_acct_dtls a
+         where dat_last_charged < var_mig_date
+           and cod_acct_stat not in (1, 5, 11)
+           and a.ctr_disb > 0
+           and not exists (select 1
+                  from co_LN_ACCT_ACCRUAL_AMT c
+                 where a.cod_acct_no = c.cod_acct_no
+                   and amt_accrual > 0)
+           and rownum <= 10 --sample 10 records esaf_changes;
+           AND a.migration_source = 'CBS';
+
+    EXCEPTION
+      WHEN OTHERS THEN
+        cbsfchost.ora_raiserror(sqlcode,
+                                'In #' || var_l_function_name ||
+                                '# INSERT INTO co_ln_consis_acct Failed.' ||
+                                sqlerrm,
+                                1915);
+    END;
+  END IF;
+
+  IF (var_l_count1 > 0) THEN
+    BEGIN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, cod_acct_no, MIGRATION_SOURCE
+          FROM co_ln_acct_dtls a
+         where dat_last_charged < var_mig_date
+           and cod_acct_stat not in (1, 5, 11)
+           and a.ctr_disb > 0
+           and not exists (select 1
+                  from co_LN_ACCT_ACCRUAL_AMT c
+                 where a.cod_acct_no = c.cod_acct_no
+                   and amt_accrual > 0)
+           and rownum <= 10 --sample 10 records esaf_changes;
+           AND a.migration_source = 'BRNET';
+
+    EXCEPTION
+      WHEN OTHERS THEN
+        cbsfchost.ora_raiserror(sqlcode,
+                                'In #' || var_l_function_name ||
+                                '# INSERT INTO co_ln_consis_acct Failed.' ||
+                                sqlerrm,
+                                1915);
+    END;
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  var_l_table_name := 'CO_LN_ACCT_PAYINSTRN';
+  var_l_consis_no  := 12121;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_payinstrn a
+     WHERE NOT EXISTS (SELECT 1
+              FROM co_ln_acct_dtls b
+             WHERE b.cod_acct_no = a.cod_acct_no)
+       AND a.migration_source = 'CBS';
+
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_payinstrn a
+     WHERE NOT EXISTS (SELECT 1
+              FROM co_ln_acct_dtls b
+             WHERE b.cod_acct_no = a.cod_acct_no)
+       AND a.migration_source = 'BRNET';
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'COD_ACCT_NO',
+       var_l_function_name,
+       var_l_count,
+       'cod_acct_no IS NOT IN co_ln_acct_dtls');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'COD_ACCT_NO',
+       var_l_function_name,
+       var_l_count1,
+       'cod_acct_no IS NOT IN co_ln_acct_dtls');
+
+  END;
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+        FROM co_ln_acct_payinstrn a
+       WHERE NOT EXISTS (SELECT 1
+                FROM co_ln_acct_dtls b
+               WHERE b.cod_acct_no = a.cod_acct_no)
+         AND a.migration_source = 'CBS';
+
+  END IF;
+
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+        FROM co_ln_acct_payinstrn a
+       WHERE NOT EXISTS (SELECT 1
+                FROM co_ln_acct_dtls b
+               WHERE b.cod_acct_no = a.cod_acct_no)
+         AND a.migration_source = 'BRNET';
+
+  END IF;
+  ----
+
+  var_l_table_name := 'CO_LN_ACCT_DTLS';
+  var_l_consis_no  := 12121;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      from co_ln_acct_dtls
+     where dat_last_charged < var_dat_process
+       and dat_of_maturity > var_dat_process
+       and cod_acct_no not in
+           (select cod_acct_no from co_ln_acct_accrual_amt)
+       and migration_source = 'BRNET';
+
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      from co_ln_acct_dtls
+     where dat_last_charged < var_dat_process
+       and dat_of_maturity > var_dat_process
+       and cod_acct_no not in
+           (select cod_acct_no from co_ln_acct_accrual_amt)
+       and migration_source = 'CBS';
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'COD_ACCT_NO',
+       var_l_function_name,
+       var_l_count,
+       'cod_acct_no IS NOT IN co_ln_acct_dtls');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'COD_ACCT_NO',
+       var_l_function_name,
+       var_l_count1,
+       'cod_acct_no IS NOT IN co_ln_acct_dtls');
+
+  END;
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+        FROM co_ln_acct_payinstrn a
+       WHERE NOT EXISTS (SELECT 1
+                FROM co_ln_acct_dtls b
+               WHERE b.cod_acct_no = a.cod_acct_no)
+         AND a.migration_source = 'CBS';
+
+  END IF;
+
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+        FROM co_ln_acct_payinstrn a
+       WHERE NOT EXISTS (SELECT 1
+                FROM co_ln_acct_dtls b
+               WHERE b.cod_acct_no = a.cod_acct_no)
+         AND a.migration_source = 'BRNET';
+
+  END IF;
+  ----NEW
+
+  var_l_table_name := 'CO_LN_ACCT_DTLS';
+  var_l_consis_no  := 12122;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      from co_ln_acct_dtls
+     where dat_last_charged < var_dat_process
+       and dat_of_maturity > var_dat_process
+       and cod_acct_no not in
+           (select cod_acct_no from co_ln_acct_accrual_amt)
+       and migration_source = 'CBS';
+
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      from co_ln_acct_dtls
+     where dat_last_charged < var_dat_process
+       and dat_of_maturity > var_dat_process
+       and cod_acct_no not in
+           (select cod_acct_no from co_ln_acct_accrual_amt)
+       and migration_source = 'BRNET';
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'LN',
+       var_l_table_name,
+       'COD_ACCT_NO',
+       var_l_function_name,
+       var_l_count,
+       'Uncharged accrual amt not provided co_ln_acct_accrual_amt');
+
+  END;
+  BEGIN
+    INSERT INTO co_ln_consis
+      (cod_consis_no,
+       nam_module,
+       nam_table,
+       nam_column,
+       nam_consis_func,
+       consis_count,
+       desc_cons)
+    VALUES
+      (var_l_consis_no,
+       'MFI',
+       var_l_table_name,
+       'COD_ACCT_NO',
+       var_l_function_name,
+       var_l_count1,
+       'Uncharged accrual amt not provided co_ln_acct_accrual_amt');
+
+  END;
+  IF (var_l_count > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+        FROM co_ln_acct_dtls a
+       where dat_last_charged < var_dat_process
+         and dat_of_maturity > var_dat_process
+         and cod_acct_no not in
+             (select cod_acct_no from co_ln_acct_accrual_amt)
+         and migration_source = 'CBS';
+
+  END IF;
+
+  IF (var_l_count1 > 0) THEN
+    INSERT INTO co_ln_consis_acct
+      (cod_consis_no, cod_acct_no, MIGRATION_SOURCE)
+      SELECT /*+ PARALLEL(4) */
+       var_l_consis_no, a.cod_acct_no, a.MIGRATION_SOURCE
+        from co_ln_acct_dtls a
+       where dat_last_charged < var_dat_process
+         and dat_of_maturity > var_dat_process
+         and cod_acct_no not in
+             (select cod_acct_no from co_ln_acct_accrual_amt)
+         and migration_source = 'BRNET';
+
+  END IF;
+
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  ----
+  var_l_table_name := 'CO_AC_ACCT_CRR_CODE';
+  var_l_consis_no  := 12123;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      from co_ac_acct_crr_code
+     where cod_crr_acct not in (select cod_crr from cbsfchost.ac_crr_codes)
+     and migration_source ='CBS';
+
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'LN',
+         var_l_table_name,
+         'COD_CRR_ACCT',
+         var_l_function_name,
+         var_l_count,
+         'COD_CRR_ACCT not in Day0 table AC_CRR_CODE');
+
+    END;
+
+    IF (var_l_count > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'CBS'
+          from co_ac_acct_crr_code A
+         where cod_crr_acct not in
+               (select cod_crr from cbsfchost.ac_crr_codes)
+               and migration_source ='CBS';
+
+    END IF;
+  END;
+  
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      from co_ac_acct_crr_code
+     where cod_crr_acct not in (select cod_crr from cbsfchost.ac_crr_codes)
+     and migration_source ='BRNET';
+
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'BRNET',
+         var_l_table_name,
+         'COD_CRR_ACCT',
+         var_l_function_name,
+         var_l_count1,
+         'COD_CRR_ACCT not in Day0 table AC_CRR_CODE');
+
+    END;
+
+    IF (var_l_count1 > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'BRNET'
+          from co_ac_acct_crr_code A
+         where cod_crr_acct not in
+               (select cod_crr from cbsfchost.ac_crr_codes)
+               and migration_source ='BRNET';
+
+    END IF;
+  END;
+  COMMIT;
+  ----
+
+  var_l_table_name := 'CO_LN_ACCT_ATTRIBUTES';
+  var_l_consis_no  := 12124;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM CO_Ln_Acct_Attributes A, CO_LN_aCCt_DTLS B
+     WHERE A.COD_aCCt_NO = B.COD_aCCt_NO
+       AND A.Flg_Secured = 'N'
+       and b.cod_prod in
+           (select cod_prod
+              from cbsfchost.ln_prod_mast c
+             where c.cod_secured in (4, 5, 6, 7))
+             and b.migration_source ='CBS';
+    /*collateral--4
+    collateral+co_borrower --5
+    collateral+guarantor--6
+    collateral+guarantor+co_borrower--7
+    */
+
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'LN',
+         var_l_table_name,
+         'FLG_SECURED',
+         var_l_function_name,
+         var_l_count,
+         'product is for secured collateral, but acct level flg_secured provided as N');
+
+    END;
+
+    IF (var_l_count > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'CBS'
+          FROM CO_Ln_Acct_Attributes A, CO_LN_aCCt_DTLS B
+         WHERE A.COD_aCCt_NO = B.COD_aCCt_NO
+           AND A.Flg_Secured = 'N'
+           and b.cod_prod in
+               (select cod_prod
+                  from cbsfchost.ln_prod_mast c
+                 where c.cod_secured in (4, 5, 6, 7))
+                 and b.migration_source ='CBS';
+
+    END IF;
+  END;
+  
+   BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM CO_Ln_Acct_Attributes A, CO_LN_aCCt_DTLS B
+     WHERE A.COD_aCCt_NO = B.COD_aCCt_NO
+       AND A.Flg_Secured = 'N'
+       and b.cod_prod in
+           (select cod_prod
+              from cbsfchost.ln_prod_mast c
+             where c.cod_secured in (4, 5, 6, 7))
+             and b.migration_source ='BRNET';
+    /*collateral--4
+    collateral+co_borrower --5
+    collateral+guarantor--6
+    collateral+guarantor+co_borrower--7
+    */
+
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'BRNET',
+         var_l_table_name,
+         'FLG_SECURED',
+         var_l_function_name,
+         var_l_count1,
+         'product is for secured collateral, but acct level flg_secured provided as N');
+
+    END;
+
+    IF (var_l_count1 > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'BRNET'
+          FROM CO_Ln_Acct_Attributes A, CO_LN_aCCt_DTLS B
+         WHERE A.COD_aCCt_NO = B.COD_aCCt_NO
+           AND A.Flg_Secured = 'N'
+           and b.cod_prod in
+               (select cod_prod
+                  from cbsfchost.ln_prod_mast c
+                 where c.cod_secured in (4, 5, 6, 7))
+                 and b.migration_source ='BRNET';
+
+    END IF;
+  END;
+  
+  COMMIT;
+  ----
+  var_l_table_name := 'CO_LN_ACCT_ATTRIBUTES';
+  var_l_consis_no  := 12125;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM CO_Ln_Acct_Attributes A, CO_LN_aCCt_DTLS B
+     WHERE A.COD_aCCt_NO = B.COD_aCCt_NO
+       and not exists (select 1
+              from co_ba_ho_coll_acct_xref c
+             where c.cod_accT_no = b.Cod_Acct_No)
+       AND b.cod_prod in
+           (select cod_prod
+              from cbsfchost.ln_prod_mast c
+             where c.cod_secured in (4, 5, 6, 7))
+             and b.migration_source ='CBS';
+    /*collateral--4
+    collateral+co_borrower --5
+    collateral+guarantor--6
+    collateral+guarantor+co_borrower--7
+    */
+
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'LN',
+         var_l_table_name,
+         'FLG_SECURED',
+         var_l_function_name,
+         var_l_count,
+         'product is for secured collateral, but collateral not present in ba_ho_coll_AccT_xref');
+
+    END;
+
+    IF (var_l_count > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'CBS'
+          FROM CO_Ln_Acct_Attributes A, CO_LN_aCCt_DTLS B
+         WHERE A.COD_aCCt_NO = B.COD_aCCt_NO
+           and not exists
+         (select 1
+                  from co_ba_ho_coll_acct_xref c
+                 where c.cod_accT_no = b.Cod_Acct_No)
+           AND b.cod_prod in
+               (select cod_prod
+                  from cbsfchost.ln_prod_mast c
+                 where c.cod_secured in (4, 5, 6, 7))
+                 and b.migration_source ='CBS';
+
+    END IF;
+  END;
+   BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM CO_Ln_Acct_Attributes A, CO_LN_aCCt_DTLS B
+     WHERE A.COD_aCCt_NO = B.COD_aCCt_NO
+       and not exists (select 1
+              from co_ba_ho_coll_acct_xref c
+             where c.cod_accT_no = b.Cod_Acct_No)
+       AND b.cod_prod in
+           (select cod_prod
+              from cbsfchost.ln_prod_mast c
+             where c.cod_secured in (4, 5, 6, 7))
+             and b.migration_source ='BRNET';
+    /*collateral--4
+    collateral+co_borrower --5
+    collateral+guarantor--6
+    collateral+guarantor+co_borrower--7
+    */
+
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'LN',
+         var_l_table_name,
+         'FLG_SECURED',
+         var_l_function_name,
+         var_l_count1,
+         'product is for secured collateral, but collateral not present in ba_ho_coll_AccT_xref');
+
+    END;
+
+    IF (var_l_count1 > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'BRNET'
+          FROM CO_Ln_Acct_Attributes A, CO_LN_aCCt_DTLS B
+         WHERE A.COD_aCCt_NO = B.COD_aCCt_NO
+           and not exists
+         (select 1
+                  from co_ba_ho_coll_acct_xref c
+                 where c.cod_accT_no = b.Cod_Acct_No)
+           AND b.cod_prod in
+               (select cod_prod
+                  from cbsfchost.ln_prod_mast c
+                 where c.cod_secured in (4, 5, 6, 7))
+                 and b.migration_source ='BRNET';
+
+    END IF;
+  END;
+  
+  COMMIT;
+  ----
+
+  ----
+  var_l_table_name := 'CO_LN_ACCT_DTLS';
+  var_l_consis_no  := 12126;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_dtls A
+     where not exists (select 1
+              from co_ln_acct_apln_detl c
+             where c.cod_accT_no = A.Cod_Acct_No)
+             and migration_source ='CBS';
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'LN',
+         var_l_table_name,
+         'COD_ACCT_NO',
+         var_l_function_name,
+         var_l_count,
+         'Accounts provided in ln_accT_dtls but those not present in ln_acct_apln_detl');
+
+    END;
+
+    IF (var_l_count > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'CBS'
+          FROM co_ln_acct_dtls A
+         where not exists (select 1
+                  from co_ln_acct_apln_detl c
+                 where c.cod_accT_no = A.Cod_Acct_No)
+                 and migration_source ='CBS';
+
+    END IF;
+  END;
+  
+   BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_dtls A
+     where not exists (select 1
+              from co_ln_acct_apln_detl c
+             where c.cod_accT_no = A.Cod_Acct_No)
+             and migration_source ='BRNET';
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'LN',
+         var_l_table_name,
+         'COD_ACCT_NO',
+         var_l_function_name,
+         var_l_count1,
+         'Accounts provided in ln_accT_dtls but those not present in ln_acct_apln_detl');
+
+    END;
+
+    IF (var_l_count1 > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'BRNET'
+          FROM co_ln_acct_dtls A
+         where not exists (select 1
+                  from co_ln_acct_apln_detl c
+                 where c.cod_accT_no = A.Cod_Acct_No)
+                 and migration_source ='BRNET';
+
+    END IF;
+  END;
+  
+  COMMIT;
+  --
+
+  ----
+  var_l_table_name := 'CO_LN_ACCT_DTLS';
+  var_l_consis_no  := 12127;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      from Co_Ln_Acct_Dtls a, co_ln_acct_schedule b
+     where a.cod_acct_no = b.cod_acct_no
+       and var_dat_process
+            between b.dat_stage_start and dat_stage_end
+       and a.dat_last_charged < b.dat_first_instal
+       and a.migration_source = 'CBS';
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'LN',
+         var_l_table_name,
+         'dat_last_charged',
+         var_l_function_name,
+         var_l_count,
+         'dat_last_charged is less than dat_first_instal');
+
+    END;
+
+    IF (var_l_count > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'CBS'
+           from Co_Ln_Acct_Dtls a, co_ln_acct_schedule b
+     where a.cod_acct_no = b.cod_acct_no
+       and var_dat_process
+            between b.dat_stage_start and dat_stage_end
+       and a.dat_last_charged < b.dat_first_instal
+       and a.migration_source = 'CBS';
+
+    END IF;
+  END;
+  
+   BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      from Co_Ln_Acct_Dtls a, co_ln_acct_schedule b
+     where a.cod_acct_no = b.cod_acct_no
+       and var_dat_process
+            between b.dat_stage_start and dat_stage_end
+       and a.dat_last_charged < b.dat_first_instal
+       and a.migration_source = 'BRNET';
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'BRNET',
+         var_l_table_name,
+         'dat_last_charged',
+         var_l_function_name,
+         var_l_count1,
+         'dat_last_charged is less than dat_first_instal');
+
+    END;
+
+    IF (var_l_count1 > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'BRNET'
+           from Co_Ln_Acct_Dtls a, co_ln_acct_schedule b
+     where a.cod_acct_no = b.cod_acct_no
+       and var_dat_process
+            between b.dat_stage_start and dat_stage_end
+       and a.dat_last_charged < b.dat_first_instal
+       and a.migration_source = 'BRNET';
+
+    END IF;
+  END;
+  
+  COMMIT;
+  -------------------
+  
+   var_l_table_name := 'CO_LN_ARREARS_TABLE';
+  var_l_consis_no  := 12128;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_arrears_table A
+           WHERE A.cod_arrear_type IN ('U', 'L', 'N', 'D', 'E', 'G', 'M')
+             AND EXISTS (SELECT 1
+                    FROM co_ln_acct_dtls b
+                   WHERE A.cod_acct_no = b.cod_acct_no/*
+                     AND b.cod_cc_brn = var_cod_cc_brn*/)
+       and a.migration_source = 'CBS';
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'LN',
+         var_l_table_name,
+         'COD_ARREAR_TYPE',
+         var_l_function_name,
+         var_l_count,
+         'Accounts where Suspended arrears are present--INFO');
+
+    END;
+
+    IF (var_l_count > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'CBS'
+           FROM co_ln_arrears_table A
+           WHERE A.cod_arrear_type IN ('U', 'L', 'N', 'D', 'E', 'G', 'M')
+             AND EXISTS (SELECT 1
+                    FROM co_ln_acct_dtls b
+                   WHERE A.cod_acct_no = b.cod_acct_no/*
+                     AND b.cod_cc_brn = var_cod_cc_brn*/)
+       and a.migration_source = 'CBS';
+
+    END IF;
+  END;
+  
+   BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_arrears_table A
+           WHERE A.cod_arrear_type IN ('U', 'L', 'N', 'D', 'E', 'G', 'M')
+             AND EXISTS (SELECT 1
+                    FROM co_ln_acct_dtls b
+                   WHERE A.cod_acct_no = b.cod_acct_no/*
+                     AND b.cod_cc_brn = var_cod_cc_brn*/)
+       and a.migration_source = 'BRNET';
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'BRNET',
+         var_l_table_name,
+         'COD_ARREAR_TYPE',
+         var_l_function_name,
+         var_l_count1,
+         'Accounts where Suspended arrears are present--INFO');
+
+    END;
+
+    IF (var_l_count1 > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'BRNET'
+           FROM co_ln_arrears_table A
+           WHERE A.cod_arrear_type IN ('U', 'L', 'N', 'D', 'E', 'G', 'M')
+             AND EXISTS (SELECT 1
+                    FROM co_ln_acct_dtls b
+                   WHERE A.cod_acct_no = b.cod_acct_no/*
+                     AND b.cod_cc_brn = var_cod_cc_brn*/)
+       and a.migration_source = 'BRNET';
+
+    END IF;
+  END;
+  
+  commit;
+  
+  ---------------------------------------
+  
+  
+   var_l_table_name := 'CO_LN_ARREARS_TABLE';
+  var_l_consis_no  := 12129;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+      FROM co_ln_acct_dtls A
+         WHERE NOT EXISTS (SELECT 1
+                  FROM co_ln_arrears_table b
+                 WHERE A.cod_acct_no = b.cod_acct_no)/*
+                 and a.cod_cc_brn = var_cod_cc_brn*/
+                AND EXISTS (SELECT 1 FROM co_ln_acct_schedule S
+                    WHERE S.cod_acct_no = A.cod_acct_no
+                    AND dat_first_instal != '01-JAN-1950' 
+                    AND least(dat_first_int, dat_first_instal) < var_mig_date)
+       and a.migration_source = 'CBS';
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'LN',
+         var_l_table_name,
+         'COD_ARREAR_TYPE',
+         var_l_function_name,
+         var_l_count,
+         'Records where no arrear details are provided--INFO');
+
+    END;
+
+    IF (var_l_count > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'CBS'
+           FROM co_ln_acct_dtls A
+         WHERE NOT EXISTS (SELECT 1
+                  FROM co_ln_arrears_table b
+                 WHERE A.cod_acct_no = b.cod_acct_no)/*
+                 and a.cod_cc_brn = var_cod_cc_brn*/
+                AND EXISTS (SELECT 1 FROM co_ln_acct_schedule S
+                    WHERE S.cod_acct_no = A.cod_acct_no
+                    AND dat_first_instal != '01-JAN-1950' 
+                    AND least(dat_first_int, dat_first_instal) < var_mig_date)
+       and a.migration_source = 'CBS';
+
+    END IF;
+  END;
+  
+   BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+     FROM co_ln_acct_dtls A
+         WHERE NOT EXISTS (SELECT 1
+                  FROM co_ln_arrears_table b
+                 WHERE A.cod_acct_no = b.cod_acct_no)/*
+                 and a.cod_cc_brn = var_cod_cc_brn*/
+                AND EXISTS (SELECT 1 FROM co_ln_acct_schedule S
+                    WHERE S.cod_acct_no = A.cod_acct_no
+                    AND dat_first_instal != '01-JAN-1950' 
+                    AND least(dat_first_int, dat_first_instal) < var_mig_date)
+       and a.migration_source = 'BRNET';
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'BRNET',
+         var_l_table_name,
+         'COD_ARREAR_TYPE',
+         var_l_function_name,
+         var_l_count1,
+         'Records where no arrear details are provided--INFO');
+
+    END;
+
+    IF (var_l_count1 > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'BRNET'
+          FROM co_ln_acct_dtls A
+         WHERE NOT EXISTS (SELECT 1
+                  FROM co_ln_arrears_table b
+                 WHERE A.cod_acct_no = b.cod_acct_no)/*
+                 and a.cod_cc_brn = var_cod_cc_brn*/
+                AND EXISTS (SELECT 1 FROM co_ln_acct_schedule S
+                    WHERE S.cod_acct_no = A.cod_acct_no
+                    AND dat_first_instal != '01-JAN-1950' 
+                    AND least(dat_first_int, dat_first_instal) < var_mig_date)
+       and a.migration_source = 'BRNET';
+
+    END IF;
+  END;
+  
+  commit;
+  
+  ------------------------------------------
+  
+   var_l_table_name := 'CO_LN_ACCT_SCHEDULE_DETLS';
+  var_l_consis_no  := 12130;
+  BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count
+       FROM co_ln_acct_dtls A,
+                co_ln_acct_balances C
+             WHERE 
+            A.cod_acct_no = C.cod_acct_no
+--            AND A.cod_prod NOT IN (select cod_prod from z_ln_consis_exclude_product where flg_mnt_status = 'A') --AU specific. To exclude Gold loan
+            AND C.amt_disbursed !=
+--         AND amt_face_value !=
+               (SELECT SUM(amt_principal)
+                  FROM co_ln_acct_schedule_detls b
+                 WHERE A.cod_acct_no = b.cod_acct_no) /*
+                           and cod_cc_brn = var_cod_cc_brn*/
+       and a.migration_source = 'CBS';
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'LN',
+         var_l_table_name,
+         'COD_ACCT_NO',
+         var_l_function_name,
+         var_l_count,
+         'Accounts where total principal repayment is not matching the disbursed amount--INFO');
+
+    END;
+
+    IF (var_l_count > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'CBS'
+           FROM co_ln_acct_dtls A,
+                co_ln_acct_balances C
+             WHERE 
+            A.cod_acct_no = C.cod_acct_no
+--            AND A.cod_prod NOT IN (select cod_prod from z_ln_consis_exclude_product where flg_mnt_status = 'A') --AU specific. To exclude Gold loan
+            AND C.amt_disbursed !=
+--         AND amt_face_value !=
+               (SELECT SUM(amt_principal)
+                  FROM co_ln_acct_schedule_detls b
+                 WHERE A.cod_acct_no = b.cod_acct_no) /*
+                           and cod_cc_brn = var_cod_cc_brn*/
+       and a.migration_source = 'CBS';
+
+    END IF;
+  END;
+  
+   BEGIN
+    SELECT /*+ PARALLEL(4) */
+     COUNT(1)
+      INTO var_l_count1
+      FROM co_ln_acct_dtls A,
+                co_ln_acct_balances C
+             WHERE 
+            A.cod_acct_no = C.cod_acct_no
+--            AND A.cod_prod NOT IN (select cod_prod from z_ln_consis_exclude_product where flg_mnt_status = 'A') --AU specific. To exclude Gold loan
+            AND C.amt_disbursed !=
+--         AND amt_face_value !=
+               (SELECT SUM(amt_principal)
+                  FROM co_ln_acct_schedule_detls b
+                 WHERE A.cod_acct_no = b.cod_acct_no) /*
+                           and cod_cc_brn = var_cod_cc_brn*/
+       and a.migration_source = 'BRNET';
+    BEGIN
+      INSERT INTO co_ln_consis
+        (cod_consis_no,
+         nam_module,
+         nam_table,
+         nam_column,
+         nam_consis_func,
+         consis_count,
+         desc_cons)
+      VALUES
+        (var_l_consis_no,
+         'BRNET',
+         var_l_table_name,
+         'COD_ACCT_NO',
+         var_l_function_name,
+         var_l_count1,
+         'Accounts where total principal repayment is not matching the disbursed amount--INFO');
+
+    END;
+
+    IF (var_l_count1 > 0) THEN
+      INSERT INTO co_ln_consis_acct
+        (cod_consis_no, cod_acct_no,migration_source)
+        SELECT /*+ PARALLEL(4) */
+         var_l_consis_no, a.cod_acct_no,'BRNET'
+          FROM co_ln_acct_dtls A,
+                co_ln_acct_balances C
+             WHERE 
+            A.cod_acct_no = C.cod_acct_no
+--            AND A.cod_prod NOT IN (select cod_prod from z_ln_consis_exclude_product where flg_mnt_status = 'A') --AU specific. To exclude Gold loan
+            AND C.amt_disbursed !=
+--         AND amt_face_value !=
+               (SELECT SUM(amt_principal)
+                  FROM co_ln_acct_schedule_detls b
+                 WHERE A.cod_acct_no = b.cod_acct_no) /*
+                           and cod_cc_brn = var_cod_cc_brn*/
+       and a.migration_source = 'BRNET';
+
+    END IF;
+  END;
+  
+  COMMIT;
+  
+  ----------------------------------------------
+  ap_bb_mig_log_string(LPAD(var_l_consis_no, 5, 0) || ' #' ||
+                       var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --after each consis
+  COMMIT;
+
+  ap_bb_mig_log_string('99999 #' || var_l_function_name || '# Stream = ' ||
+                       var_pi_stream); --Ending of function
+  RETURN 0;
+END ap_cons_ln_acct_misc;
+

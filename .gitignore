@@ -1,0 +1,15 @@
+# Build outputs
+target/
+out/
+
+# IDE
+.idea/
+.classpath
+.project
+.settings/
+*.iml
+
+# Misc
+*.log
+example.csv
+
