@@ -10,6 +10,12 @@ import java.util.Objects;
 
 /**
  * Minimal logger with levels and optional file output.
+ * <p>
+ * Features:
+ * - Log levels: DEBUG, INFO, WARN, ERROR
+ * - Timestamped console output, WARN/ERROR to stderr, others to stdout
+ * - Optional file sink via {@link #toFile(java.nio.file.Path)}
+ * - Basic thread safety on the {@link #log(Level, Throwable, String, Object...)} method
  */
 public final class Logger {
   public enum Level { DEBUG, INFO, WARN, ERROR }
@@ -22,11 +28,18 @@ public final class Logger {
 
   private Logger(String name) { this.name = name == null ? "" : name; }
 
+  /** Obtain a logger by name. */
   public static Logger get(String name) { return new Logger(name); }
+  /** Obtain a logger named after the provided class' simple name. */
   public static Logger get(Class<?> cls) { return new Logger(cls == null ? "" : cls.getSimpleName()); }
 
+  /** Set the minimum level to emit. */
   public Logger level(Level lvl) { this.level = Objects.requireNonNull(lvl, "level"); return this; }
 
+  /**
+   * Write log output to the provided file path (overwrites/creates file).
+   * Subsequent calls replace the current file sink. Use {@link #closeFile()} to stop writing to file.
+   */
   public Logger toFile(Path path) throws IOException {
     closeFile();
     if (path != null) {
@@ -36,6 +49,7 @@ public final class Logger {
     return this;
   }
 
+  /** Close the file sink if one is configured. */
   public void closeFile() {
     if (fileWriter != null) {
       fileWriter.flush();
@@ -44,12 +58,14 @@ public final class Logger {
     }
   }
 
-  public void debug(String fmt, Object... args) { log(Level.DEBUG, null, fmt, args); }
-  public void info(String fmt, Object... args)  { log(Level.INFO,  null, fmt, args); }
-  public void warn(String fmt, Object... args)  { log(Level.WARN,  null, fmt, args); }
-  public void error(String fmt, Object... args) { log(Level.ERROR, null, fmt, args); }
+  /** Log a DEBUG message. */ public void debug(String fmt, Object... args) { log(Level.DEBUG, null, fmt, args); }
+  /** Log an INFO message.  */ public void info(String fmt, Object... args)  { log(Level.INFO,  null, fmt, args); }
+  /** Log a WARN message.  */ public void warn(String fmt, Object... args)  { log(Level.WARN,  null, fmt, args); }
+  /** Log an ERROR message. */ public void error(String fmt, Object... args) { log(Level.ERROR, null, fmt, args); }
+  /** Log an ERROR with an attached throwable. */
   public void error(Throwable t, String fmt, Object... args) { log(Level.ERROR, t, fmt, args); }
 
+  /** Core logging method used by the convenience level methods. */
   public synchronized void log(Level lvl, Throwable t, String fmt, Object... args) {
     if (lvl.ordinal() < level.ordinal()) return;
     String ts = LocalDateTime.now().format(TS);
@@ -74,4 +90,3 @@ public final class Logger {
     catch (Exception e) { return String.valueOf(fmt); }
   }
 }
-

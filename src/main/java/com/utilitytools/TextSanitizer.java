@@ -4,13 +4,22 @@ import java.text.Normalizer;
 import java.util.Objects;
 
 /**
- * String sanitization helpers: remove diacritics, special chars, and normalize whitespace.
+ * String sanitization helpers: remove diacritics, special characters, and normalize whitespace.
+ * <p>
+ * Key operations:
+ * - {@link #trimAndNormalizeWhitespace(String)}: collapse whitespace to single spaces and trim ends
+ * - {@link #removeDiacritics(String)}: strip combining marks (accents)
+ * - {@link #removeSpecialChars(String)}: keep only letters, digits, and spaces
+ * - {@link #removeSpecialChars(String, String)}: additionally allow literal characters from {@code allowedExtra}
+ * - {@link #sanitize(String)}: common pipeline of the above
  */
 public final class TextSanitizer {
   private TextSanitizer() {}
 
   /**
    * Remove leading/trailing whitespace and collapse any consecutive whitespace to a single space.
+   * @param input input text (nullable)
+   * @return normalized text or {@code null} if input is {@code null}
    */
   public static String trimAndNormalizeWhitespace(String input) {
     if (input == null) return null;
@@ -19,7 +28,10 @@ public final class TextSanitizer {
   }
 
   /**
-   * Remove diacritical marks (accents), producing plain ASCII letters where possible.
+   * Remove diacritical marks (accents) by stripping combining marks.
+   * Uses NFD normalization to split base letters and marks, then removes marks.
+   * @param input input text (nullable)
+   * @return text without combining marks or {@code null} if input is {@code null}
    */
   public static String removeDiacritics(String input) {
     if (input == null) return null;
@@ -29,6 +41,8 @@ public final class TextSanitizer {
 
   /**
    * Remove all characters except letters, digits, and spaces. Keeps unicode letters/digits.
+   * @param input input text (nullable)
+   * @return filtered text or {@code null} if input is {@code null}
    */
   public static String removeSpecialChars(String input) {
     if (input == null) return null;
@@ -36,8 +50,12 @@ public final class TextSanitizer {
   }
 
   /**
-   * Remove all characters except letters, digits, spaces, and the characters in allowedExtra (treated literally).
+   * Remove all characters except letters, digits, spaces, and the characters in {@code allowedExtra} (treated literally).
    * This variant avoids regex escaping and supports full Unicode code points.
+   * @param input input text (nullable)
+   * @param allowedExtra literal characters to also keep (non-null, may be empty)
+   * @return filtered text or {@code null} if input is {@code null}
+   * @throws NullPointerException if {@code allowedExtra} is null
    */
   public static String removeSpecialChars(String input, String allowedExtra) {
     if (input == null) return null;
@@ -64,6 +82,8 @@ public final class TextSanitizer {
 
   /**
    * Full sanitize pipeline: remove diacritics, drop special chars, then trim/normalize whitespace.
+   * @param input input text (nullable)
+   * @return sanitized text or {@code null} if input is {@code null}
    */
   public static String sanitize(String input) {
     if (input == null) return null;
@@ -73,4 +93,3 @@ public final class TextSanitizer {
     return s;
   }
 }
-

@@ -11,18 +11,24 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Minimal CSV reader/writer that supports RFC 4180 style CSV:
- * - Commas and newlines inside quoted fields
- * - Quotes inside fields escaped as "" (double quote)
+ * Minimal CSV reader/writer supporting an RFC 4180-style dialect:
+ * - Commas and newlines allowed inside quoted fields
+ * - Quotes inside fields are escaped as doubled quotes ({@code ""})
+ * - Records may be separated by {@code \n}, {@code \r}, or {@code \r\n}
+ * <p>
+ * The implementation is dependency-free and operates on {@link java.io.Reader}/{@link java.io.Writer}
+ * or {@link java.nio.file.Path} convenience overloads.
  */
 public final class CsvUtils {
   private CsvUtils() {}
 
   // Convenience defaults
+  /** Read all CSV records from a file using UTF-8. */
   public static List<List<String>> readAll(Path path) throws IOException {
     return readAll(path, StandardCharsets.UTF_8);
   }
 
+  /** Read all CSV records from a file using the provided charset. */
   public static List<List<String>> readAll(Path path, Charset charset) throws IOException {
     Objects.requireNonNull(path, "path");
     Objects.requireNonNull(charset, "charset");
@@ -31,6 +37,7 @@ public final class CsvUtils {
     }
   }
 
+  /** Read all CSV records from a {@link Reader}. */
   public static List<List<String>> readAll(Reader reader) throws IOException {
     Objects.requireNonNull(reader, "reader");
     PushbackReader in = (reader instanceof PushbackReader) ? (PushbackReader) reader : new PushbackReader(reader, 1);
@@ -89,10 +96,12 @@ public final class CsvUtils {
     return rows;
   }
 
+  /** Write all rows to a file using UTF-8. */
   public static void writeAll(Path path, List<List<String>> rows) throws IOException {
     writeAll(path, rows, StandardCharsets.UTF_8);
   }
 
+  /** Write all rows to a file using the provided charset. */
   public static void writeAll(Path path, List<List<String>> rows, Charset charset) throws IOException {
     Objects.requireNonNull(path, "path");
     Objects.requireNonNull(rows, "rows");
@@ -102,6 +111,7 @@ public final class CsvUtils {
     }
   }
 
+  /** Write all rows to a {@link Writer}. Each row becomes one record separated by {@code \n}. */
   public static void writeAll(Writer writer, List<List<String>> rows) throws IOException {
     Objects.requireNonNull(writer, "writer");
     Objects.requireNonNull(rows, "rows");
@@ -113,6 +123,7 @@ public final class CsvUtils {
     writer.flush();
   }
 
+  /** Write a single row to a {@link Writer} without a trailing newline. */
   public static void writeRow(Writer writer, List<String> row) throws IOException {
     if (row == null) row = Collections.emptyList();
     for (int i = 0; i < row.size(); i++) {
@@ -121,6 +132,7 @@ public final class CsvUtils {
     }
   }
 
+  /** Escape a single field for CSV output. */
   public static String escapeField(String field) {
     if (field == null) field = "";
     boolean needsQuoting = false;
@@ -136,4 +148,3 @@ public final class CsvUtils {
     return '"' + escaped + '"';
   }
 }
-
