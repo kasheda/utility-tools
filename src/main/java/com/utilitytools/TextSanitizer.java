@@ -35,8 +35,8 @@ public final class TextSanitizer {
    */
   public static String removeDiacritics(String input) {
     if (input == null) return null;
-    String norm = Normalizer.normalize(input, Normalizer.Form.NFD);
-    return norm.replaceAll("\\p{InCombiningDiacriticalMarks}+", "");
+    String norm = Normalizer.normalize(input, Normalizer.Form.NFKD);
+    return norm.replaceAll("\\p{M}+", "");
   }
 
   /**
